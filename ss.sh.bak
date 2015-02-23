@@ -1,0 +1,10 @@
+#!/bin/bash
+
+cd /home/marvin
+if [ ! -d parRL ]; then
+    mkdir parRL
+fi
+google-cloud-sdk/bin/gsutil -m rsync -d gs://marvin-pyzmq/parRL parRL
+cd parRL
+python startup.py
+

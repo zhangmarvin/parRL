@@ -113,14 +113,21 @@ def reliable_parallel_map(func, args_lst):
     for i in range(0, len(args_lst), chunk_size):
         chunked.append(args_lst[i:i+chunk_size])
     num_chunks = len(chunked)
-    result_lst = []
+    result_lst = [None for _ in range(num_chunks)]
+    sent = [False for _ in range(num_chunks)]
     ch = 0
-    time.sleep(1)  # TODO: calibrate this for maximum performance
+    num_fails = 0
     while True:
         map_snd.send(cPickle.dumps(MAP_NUM))
         try:
             id, _, msg = map_rcv.recv_multipart()
         except zmq.error.Again:
+            num_fails += 1
+            print colorize('num fails: {}'.format(num_fails))
+            if num_fails == 100:
+                for ch in range(len(chunked)):
+                    if result_lst[ch] is None:
+                        sent[ch] = False
             continue
         if id in UNAVAILABLE:
             map_rcv.send_multipart([id, b'', END_MSG])
@@ -130,22 +137,23 @@ def reliable_parallel_map(func, args_lst):
             if s != MAP_NUM:
                 map_rcv.send_multipart([id, b'', END_MSG])
                 continue
-            if chunked[chunk] is not None:
+            if result_lst[chunk] is None:
                 print 'received results for chunk ' + str(chunk)
-                chunked[chunk] = None
                 num_chunks -= 1
-                result_lst.extend(results)
+                result_lst[chunk] = results
                 if num_chunks == 0:
                     break
-        while chunked[ch] is None:
+        if not all(sent):
+            while sent[ch]:
+                ch = (ch + 1) % len(chunked)
+            msg = cPickle.dumps((MAP_NUM, ch, func, chunked[ch]))
+            sent[ch] = True
+            print 'sending chunk ' + str(ch)
+            map_rcv.send_multipart([id, b'', msg])
             ch = (ch + 1) % len(chunked)
-        msg = cPickle.dumps((MAP_NUM, ch, func, chunked[ch]))
-        print 'sending chunk ' + str(ch)
-        map_rcv.send_multipart([id, b'', msg])
-        ch = (ch + 1) % len(chunked)
     for id in AVAILABLE:
         map_rcv.send_multipart([id, b'', END_MSG])
-    return result_lst
+    return [item for chunk in result_lst for item in chunk]
 
 parallel_map = fast_parallel_map if CONF['fast'] else reliable_parallel_map
 
